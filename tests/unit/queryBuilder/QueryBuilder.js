@@ -85,6 +85,12 @@ describe('QueryBuilder', function () {
     return promise;
   });
 
+  it('should return a promise from .execute method', function () {
+    var promise = QueryBuilder.forClass(TestModel).execute();
+    expect(promise).to.be.a(Promise);
+    return promise;
+  });
+
   it('should return a promise from .map method', function () {
     var promise = QueryBuilder.forClass(TestModel).map(_.identity);
     expect(promise).to.be.a(Promise);
@@ -697,6 +703,10 @@ describe('QueryBuilder', function () {
       this.c = 'beforeUpdate';
     };
 
+    TestModel.prototype.$afterGet = function () {
+      throw new Error('$afterGet should not be called');
+    };
+
     var model = TestModel.fromJson({a: 10, b: 'test'});
     QueryBuilder
       .forClass(TestModel)
@@ -717,6 +727,10 @@ describe('QueryBuilder', function () {
       });
     };
 
+    TestModel.prototype.$afterGet = function () {
+      throw new Error('$afterGet should not be called');
+    };
+
     var model = TestModel.fromJson({a: 10, b: 'test'});
     QueryBuilder
       .forClass(TestModel)
@@ -732,6 +746,10 @@ describe('QueryBuilder', function () {
   it('patch() should call $beforeUpdate on the model', function (done) {
     TestModel.prototype.$beforeUpdate = function () {
       this.c = 'beforeUpdate';
+    };
+
+    TestModel.prototype.$afterGet = function () {
+      throw new Error('$afterGet should not be called');
     };
 
     var model = TestModel.fromJson({a: 10, b: 'test'});
@@ -754,6 +772,10 @@ describe('QueryBuilder', function () {
       });
     };
 
+    TestModel.prototype.$afterGet = function () {
+      throw new Error('$afterGet should not be called');
+    };
+
     var model = TestModel.fromJson({a: 10, b: 'test'})
     QueryBuilder
       .forClass(TestModel)
@@ -769,6 +791,10 @@ describe('QueryBuilder', function () {
   it('insert() should call $beforeInsert on the model', function (done) {
     TestModel.prototype.$beforeInsert = function () {
       this.c = 'beforeInsert';
+    };
+
+    TestModel.prototype.$afterGet = function () {
+      throw new Error('$afterGet should not be called');
     };
 
     QueryBuilder
@@ -790,12 +816,113 @@ describe('QueryBuilder', function () {
       });
     };
 
+    TestModel.prototype.$afterGet = function () {
+      throw new Error('$afterGet should not be called');
+    };
+
     QueryBuilder
       .forClass(TestModel)
       .insert({a: 10, b: 'test'})
       .then(function (model) {
         expect(model.c).to.equal('beforeInsert');
         expect(executedQueries[0]).to.equal('insert into "Model" ("a", "b", "c") values (\'10\', \'test\', \'beforeInsert\') returning "id"');
+        done();
+      })
+      .catch(done);
+  });
+
+  it('should call $afterGet on the model if no write operation is specified', function (done) {
+    mockKnexQueryResult = [{
+      a: 1
+    }, {
+      a: 2
+    }];
+
+    TestModel.prototype.$afterGet = function (context) {
+      this.b = this.a * 2 + context.x;
+    };
+
+    QueryBuilder
+      .forClass(TestModel)
+      .context({x: 10})
+      .then(function (models) {
+        expect(models[0]).to.be.a(TestModel);
+        expect(models[1]).to.be.a(TestModel);
+        expect(models).to.eql([{
+          a: 1,
+          b: 12
+        }, {
+          a: 2,
+          b: 14
+        }]);
+        done();
+      })
+      .catch(done);
+  });
+
+  it('should call $afterGet on the model if no write operation is specified (async)', function (done) {
+    mockKnexQueryResult = [{
+      a: 1
+    }, {
+      a: 2
+    }];
+
+    TestModel.prototype.$afterGet = function (context) {
+      var self = this;
+      return Promise.delay(10).then(function () {
+        self.b = self.a * 2 + context.x;
+      });
+    };
+
+    QueryBuilder
+      .forClass(TestModel)
+      .context({x: 10})
+      .then(function (models) {
+        expect(models[0]).to.be.a(TestModel);
+        expect(models[1]).to.be.a(TestModel);
+        expect(models).to.eql([{
+          a: 1,
+          b: 12
+        }, {
+          a: 2,
+          b: 14
+        }]);
+        done();
+      })
+      .catch(done);
+  });
+
+  it('should call $afterGet before any `runAfter` hooks', function (done) {
+    mockKnexQueryResult = [{
+      a: 1
+    }, {
+      a: 2
+    }];
+
+    TestModel.prototype.$afterGet = function (context) {
+      var self = this;
+      return Promise.delay(10).then(function () {
+        self.b = self.a * 2 + context.x;
+      });
+    };
+
+    QueryBuilder
+      .forClass(TestModel)
+      .context({x: 10})
+      .runAfter(function (result, builder) {
+        builder.context().x = 666;
+        return result;
+      })
+      .then(function (models) {
+        expect(models[0]).to.be.a(TestModel);
+        expect(models[1]).to.be.a(TestModel);
+        expect(models).to.eql([{
+          a: 1,
+          b: 12
+        }, {
+          a: 2,
+          b: 14
+        }]);
         done();
       })
       .catch(done);
@@ -933,6 +1060,90 @@ describe('QueryBuilder', function () {
           expect(executedQueries).to.have.length(0);
           done();
         });
+    });
+
+    it("should use correct query builders", function (done) {
+      var M1 = Model.extend(function M1() {
+        Model.apply(this, arguments);
+      });
+
+      M1.tableName = 'M1';
+      M1.knex(mockKnex);
+
+      var M2 = Model.extend(function M2() {
+        Model.apply(this, arguments);
+      });
+
+      M2.tableName = 'M2';
+      M2.knex(mockKnex);
+
+      var M3 = Model.extend(function M3() {
+        Model.apply(this, arguments);
+      });
+
+      M3.tableName = 'M3';
+      M3.knex(mockKnex);
+
+      M1.relationMappings = {
+        m2: {
+          relation: Model.HasManyRelation,
+          modelClass: M2,
+          join: {
+            from: 'M1.id',
+            to: 'M2.m1Id'
+          }
+        }
+      };
+
+      M2.relationMappings = {
+        m3: {
+          relation: Model.BelongsToOneRelation,
+          modelClass: M3,
+          join: {
+            from: 'M2.m3Id',
+            to: 'M3.id'
+          }
+        }
+      };
+
+      var M1RelatedBuilder = QueryBuilder.extend(function M1RelatedBuilder() {
+        QueryBuilder.apply(this, arguments);
+      });
+
+      var M2RelatedBuilder = QueryBuilder.extend(function M2RelatedBuilder() {
+        QueryBuilder.apply(this, arguments);
+      });
+
+      M1.RelatedQueryBuilder = M1RelatedBuilder;
+      M2.RelatedQueryBuilder = M2RelatedBuilder;
+
+      mockKnexQueryResult = [{id: 1, m1Id: 2, m3Id: 3}];
+
+      var filter1Check = false;
+      var filter2Check = false;
+
+      QueryBuilder
+        .forClass(M1)
+        .eager('m2.m3')
+        .filterEager('m2', function (builder) {
+          filter1Check = builder instanceof M1RelatedBuilder;
+        })
+        .filterEager('m2.m3', function (builder) {
+          filter2Check = builder instanceof M2RelatedBuilder;
+        })
+        .then(function () {
+          expect(executedQueries).to.eql([
+            'select * from "M1"',
+            'select * from "M2" where "M2"."m1Id" in (\'1\')',
+            'select * from "M3" where "M3"."id" in (\'3\')'
+          ]);
+
+          expect(filter1Check).to.equal(true);
+          expect(filter2Check).to.equal(true);
+
+          done();
+        })
+        .catch(done);
     });
 
   });

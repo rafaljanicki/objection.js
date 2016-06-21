@@ -8,6 +8,7 @@ import ValidationError from '../ValidationError';
 import EagerFetcher from './EagerFetcher';
 import deprecated from '../utils/decorators/deprecated';
 
+import FindOperation from './operations/FindOperation';
 import DeleteOperation from './operations/DeleteOperation';
 import UpdateOperation from './operations/UpdateOperation';
 import InsertOperation from './operations/InsertOperation';
@@ -36,7 +37,7 @@ export default class QueryBuilder extends QueryBuilderBase {
     this._allowedEagerExpression = null;
     this._allowedInsertExpression = null;
 
-    this._findOperationFactory = builder => new QueryBuilderOperation(builder, 'find');
+    this._findOperationFactory = builder => new FindOperation(builder, 'find');
     this._insertOperationFactory = builder => new InsertOperation(builder, 'insert');
     this._updateOperationFactory = builder => new UpdateOperation(builder, 'update');
     this._patchOperationFactory = builder => new UpdateOperation(builder, 'patch', {modelOptions: {patch: true}});
@@ -331,7 +332,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   then(successHandler, errorHandler) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.then.apply(promise, arguments);
   }
 
@@ -340,7 +341,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   map(mapper) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.map.apply(promise, arguments);
   }
 
@@ -349,7 +350,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   catch(errorHandler) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.catch.apply(promise, arguments);
   }
 
@@ -358,7 +359,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   return(returnValue) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.return.apply(promise, arguments);
   }
 
@@ -367,7 +368,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   bind(context) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.bind.apply(promise, arguments);
   }
 
@@ -376,7 +377,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   asCallback(callback) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.asCallback.apply(promise, arguments);
   }
 
@@ -385,7 +386,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   nodeify(callback) {
-    var promise = this._execute();
+    var promise = this.execute();
     return promise.nodeify.apply(promise, arguments);
   }
 
@@ -469,31 +470,9 @@ export default class QueryBuilder extends QueryBuilderBase {
   }
 
   /**
-   * @private
-   * @returns {QueryBuilderOperation}
-   */
-  _queryExecutorOperation() {
-    let executors = _.filter(this._operations, method => method.hasQueryExecutor());
-
-    if (executors.length > 1) {
-      throw new Error('there can only be one method call that implements queryExecutor()');
-    }
-
-    return executors[0];
-  }
-
-  /**
-   * @private
-   */
-  _callFindOperation() {
-    this.callQueryBuilderOperation(this._findOperationFactory(this), []);
-  }
-
-  /**
-   * @private
    * @returns {Promise}
    */
-  _execute() {
+  execute() {
     // Take a clone so that we don't modify this instance during execution.
     let builder = this.clone();
     let promise = Promise.resolve();
@@ -531,7 +510,7 @@ export default class QueryBuilder extends QueryBuilderBase {
       }
 
       promise = chainAfterQueryOperations(promise, builder, builder._operations);
-      promise = chainAfterIntenralOperations(promise, builder, builder._operations);
+      promise = chainAfterInternalOperations(promise, builder, builder._operations);
 
       if (builder._eagerExpression) {
         promise = promise.then(models => eagerFetch(builder, models));
@@ -543,6 +522,29 @@ export default class QueryBuilder extends QueryBuilderBase {
 
       return promise;
     });
+  }
+
+  /**
+   * @private
+   * @returns {QueryBuilderOperation}
+   */
+  _queryExecutorOperation() {
+    let executors = _.filter(this._operations, method => method.hasQueryExecutor());
+
+    if (executors.length > 1) {
+      throw new Error('there can only be one method call that implements queryExecutor()');
+    }
+
+    return executors[0];
+  }
+
+  /**
+   * @private
+   */
+  _callFindOperation() {
+    if (!this.has(FindOperation)) {
+      this.callQueryBuilderOperation(this._findOperationFactory(this), [], /* pushFront = */ true);
+    }
   }
 
   /**
@@ -1014,7 +1016,7 @@ function chainAfterOperations(promise, builder, methods) {
   });
 }
 
-function chainAfterIntenralOperations(promise, builder, methods) {
+function chainAfterInternalOperations(promise, builder, methods) {
   return promiseChain(promise, methods, (res, method) => {
     return method.onAfterInternal(builder, res);
   }, method => {
